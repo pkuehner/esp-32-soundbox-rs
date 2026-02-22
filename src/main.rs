@@ -1,7 +1,15 @@
 mod led;
 mod sensors;
-use esp_idf_hal::delay::FreeRtos;
+mod timesource;
+use embedded_hal_bus::spi::ExclusiveDevice;
+use embedded_sdmmc::{SdCard, TimeSource, VolumeIdx, VolumeManager};
+use esp_idf_hal::delay::{FreeRtos};
 use esp_idf_hal::peripherals::Peripherals;
+use esp_idf_hal::spi;
+use esp_idf_hal::gpio::PinDriver;
+
+use crate::timesource::DummyTimesource;
+
 
 fn main() {
     // It is necessary to call this function once. Otherwise, some patches to the runtime
@@ -18,6 +26,34 @@ fn main() {
     let mut led = led::Led::new(led_pin);
     let motion_sensor = sensors::MotionSensor::new(motion_pin);
 
+    let sclk = peripherals.pins.gpio7;
+    let miso = peripherals.pins.gpio6;
+    let mosi = peripherals.pins.gpio8;
+    let cs = peripherals.pins.gpio9;
+
+    // Create low-level SPI driver (no hardware CS)
+    let mut spi_driver = spi::SpiDriver::new(
+        peripherals.spi2,
+        sclk,
+        mosi,
+        Some(miso),
+        &spi::config::DriverConfig::default(),
+    )
+    .unwrap();
+
+    // Wrap the driver into a SpiBusDriver (implements embedded-hal SpiBus)
+    let spi_bus = spi::SpiBusDriver::new(&mut spi_driver, &spi::config::Config::default()).unwrap();
+
+    // software-controlled CS pin for the SD card
+    let sd_cs = PinDriver::output(cs).unwrap();
+
+    let spi_dev = ExclusiveDevice::new(spi_bus, sd_cs, FreeRtos).unwrap();
+    let sdcard = SdCard::new(spi_dev, FreeRtos);
+
+    let volume_mgr = VolumeManager::new(sdcard, DummyTimesource());
+    let volume0 = volume_mgr.open_volume(VolumeIdx(0)).unwrap();
+    log::info!("Volume 0: {:?}", volume0);
+    let root_dir = volume0.open_root_dir().unwrap();          
     loop {
         //FreeRtos::delay_ms(100);
         // not detecting falling edges
