@@ -2,12 +2,11 @@ mod led;
 mod sensors;
 mod timesource;
 use embedded_hal_bus::spi::ExclusiveDevice;
-use embedded_sdmmc::{SdCard, VolumeIdx, VolumeManager};
+use embedded_sdmmc::{SdCard, VolumeIdx, VolumeManager, Mode};
 use esp_idf_hal::delay::{FreeRtos};
 use esp_idf_hal::peripherals::Peripherals;
 use esp_idf_hal::spi;
 use esp_idf_hal::gpio::PinDriver;
-
 use crate::timesource::DummyTimesource;
 
 
@@ -54,6 +53,13 @@ fn main() {
     let volume0 = volume_mgr.open_volume(VolumeIdx(0)).unwrap();
     log::info!("Volume 0: {:?}", volume0);
     let root_dir = volume0.open_root_dir().unwrap();          
+    let fp = root_dir.open_file_in_dir("build.rs", Mode::ReadOnly).unwrap();
+    let mut buffer: [u8; 1024] = [0; 1024];
+    while(!fp.is_eof()){
+        let buf = fp.read(&mut buffer).unwrap();
+        let val = str::from_utf8(&buffer).unwrap();
+        log::info!("{}", val);
+    }
     loop {
         //FreeRtos::delay_ms(100);
         // not detecting falling edges
