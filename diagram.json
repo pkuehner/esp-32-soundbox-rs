@@ -1,0 +1,49 @@
+{
+    "version": 1,
+    "editor": "wokwi",
+    "author": "passi",
+    "parts": [
+        {
+            "type": "board-esp32-c3-devkitm-1",
+            "id": "esp",
+            "top": 0.59,
+            "left": 0.67,
+            "attrs": {
+                "flashSize": "4"
+            }
+        },
+        {
+      "type": "wokwi-pir-motion-sensor",
+      "id": "pir1",
+      "top": -245.6,
+      "left": -45.78,
+      "attrs": {}
+    },
+            { "type": "wokwi-led", "id": "led1", "top": -3.6, "left": -53.8, "attrs": { "color": "red" } }
+
+    ],
+    "connections": [
+        [
+            "esp:TX",
+            "$serialMonitor:RX",
+            "",
+            []
+        ],
+        [
+            "esp:RX",
+            "$serialMonitor:TX",
+            "",
+            []
+        ],
+            [ "led1:C", "esp:GND.1", "green", [ "v0" ] ],
+    [ "led1:A", "esp:4", "green", [ "v0" ] ],
+       [ "pir1:GND", "esp:GND.4", "black", [ "v0" ] ],
+    [ "pir1:OUT", "esp:10", "green", [ "v0" ] ]
+
+  
+    ],
+    "serialMonitor": {
+        "display": "terminal",
+        "convertEol": true
+    }
+}
