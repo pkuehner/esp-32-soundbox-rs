@@ -2,7 +2,7 @@ mod led;
 mod sensors;
 mod timesource;
 use embedded_hal_bus::spi::ExclusiveDevice;
-use embedded_sdmmc::{SdCard, TimeSource, VolumeIdx, VolumeManager};
+use embedded_sdmmc::{SdCard, VolumeIdx, VolumeManager};
 use esp_idf_hal::delay::{FreeRtos};
 use esp_idf_hal::peripherals::Peripherals;
 use esp_idf_hal::spi;
