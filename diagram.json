@@ -38,7 +38,7 @@
             [ "led1:C", "esp:GND.1", "green", [ "v0" ] ],
     [ "led1:A", "esp:4", "green", [ "v0" ] ],
        [ "pir1:GND", "esp:GND.4", "black", [ "v0" ] ],
-    [ "pir1:OUT", "esp:10", "green", [ "v0" ] ]
+    [ "pir1:OUT", "esp:5", "green", [ "v0" ] ]
 
   
     ],
