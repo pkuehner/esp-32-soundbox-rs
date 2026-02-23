@@ -1,13 +1,12 @@
 mod led;
 mod sensors;
-mod timesource;
-use crate::timesource::DummyTimesource;
-use embedded_hal_bus::spi::ExclusiveDevice;
-use embedded_sdmmc::{Mode, SdCard, VolumeIdx, VolumeManager};
+mod sd;
 use esp_idf_hal::delay::FreeRtos;
-use esp_idf_hal::gpio::PinDriver;
 use esp_idf_hal::peripherals::Peripherals;
-use esp_idf_hal::spi;
+use esp_idf_hal::{
+    task::thread::ThreadSpawnConfiguration,
+};
+use std::thread;
 
 fn main() {
     // It is necessary to call this function once. Otherwise, some patches to the runtime
@@ -30,67 +29,35 @@ fn main() {
     let mosi = peripherals.pins.gpio8;
     let cs = peripherals.pins.gpio9;
 
-    // Create low-level SPI driver (no hardware CS)
-    let mut spi_driver = spi::SpiDriver::new(
-        peripherals.spi2,
-        sclk,
-        mosi,
-        Some(miso),
-        &spi::config::DriverConfig::default(),
-    )
-    .unwrap();
-
-    // Wrap the driver into a SpiBusDriver (implements embedded-hal SpiBus)
-    let spi_bus = spi::SpiBusDriver::new(&mut spi_driver, &spi::config::Config::default()).unwrap();
-
-    // software-controlled CS pin for the SD card
-    let sd_cs = PinDriver::output(cs).unwrap();
-
-    let spi_dev = ExclusiveDevice::new(spi_bus, sd_cs, FreeRtos).unwrap();
-    let sdcard = SdCard::new(spi_dev, FreeRtos);
+    // Create low-lev
+    let mut sd_fetcher = sd::SdFetcher::new(peripherals.spi2, sclk, mosi, miso, cs);
+    log::info!("{}", sd_fetcher.file_exists("test.txt"));
     FreeRtos::delay_ms(1000);
 
-    let volume_mgr = VolumeManager::new(sdcard, DummyTimesource());
-    let volume0 = volume_mgr.open_volume(VolumeIdx(0)).unwrap();
-    log::info!("Volume 0: {:?}", volume0);
-    let root_dir = volume0.open_root_dir().unwrap();
-
-
-    let fp_write = root_dir
-        .open_file_in_dir("wokwi.txt", Mode::ReadWriteCreate)
-        .unwrap();
-
-    fp_write.write("abdsadsadsad".as_bytes()).unwrap();
-    fp_write.close().unwrap();
-
-    let fp = root_dir
-        .open_file_in_dir("wokwi.txt", Mode::ReadOnly)
-        .unwrap();
-
-
-    let mut buffer: [u8; 1024] = [0; 1024];
-    while (!fp.is_eof()) {
-        let buf = fp.read(&mut buffer).unwrap();
-        let val = str::from_utf8(&buffer).unwrap();
-        log::info!("{}", val);
+    ThreadSpawnConfiguration {
+        stack_size: 4096,
+        priority: 10,
+        ..Default::default()
     }
-    loop {
-        //FreeRtos::delay_ms(100);
-        // not detecting falling edges
-        // if motion_sensor.take_changed() {
-        //     log::info!("motion changed, level={}", motion_sensor.is_moving());
-        //     if motion_sensor.is_moving() {
-        //         led.light_on();
-        //     } else {
-        //         led.light_off();
-        //     }
-        // }
+    .set()
+    .unwrap();
 
-        FreeRtos::delay_ms(1000);
-        if motion_sensor.is_moving() {
-            led.light_on();
+    thread::spawn(move || loop {
+        let moving = motion_sensor.is_moving();
+
+        if moving {
+            let _ = led.light_on();
         } else {
-            led.light_off();
+            let _ = led.light_off();
         }
+
+        FreeRtos::delay_ms(1000);       // non-busy wait
+    });
+
+    loop {
+        log::info!("Test LOOP");
+        FreeRtos::delay_ms(500);       // non-busy wait
+
     }
 }
+
