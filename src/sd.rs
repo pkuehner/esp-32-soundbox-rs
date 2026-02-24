@@ -51,11 +51,42 @@ impl<'d, T4: OutputPin> SdFetcher<'d, T4> {
     // Do operations here; avoid returning handles that outlive temporary borrows.
     pub fn file_exists(&mut self, file_name: &str) -> bool {
         let volume = self.volume_mgr.open_volume(VolumeIdx(0));
-        if let Ok(mut volume) = volume {
+        if let Ok(volume) = volume {
             if let Ok(root) = volume.open_root_dir() {
                 return root.open_file_in_dir(file_name, Mode::ReadOnly).is_ok();
             }
         }
+        false
+    }
+
+    pub fn stream_file_1024<F>(&mut self, file_name: &str, mut on_chunk: F) -> bool
+    where
+        F: FnMut(&[u8]) -> bool,
+    {
+        let volume = self.volume_mgr.open_volume(VolumeIdx(0));
+
+        if let Ok(volume) = volume {
+            if let Ok(root) = volume.open_root_dir() {
+                if let Ok(file) = root.open_file_in_dir(file_name, Mode::ReadOnly) {
+                    let mut buffer = [0_u8; 1024];
+
+                    while !file.is_eof() {
+                        match file.read(&mut buffer) {
+                            Ok(0) => break,
+                            Ok(read_len) => {
+                                if !on_chunk(&buffer[..read_len]) {
+                                    return false;
+                                }
+                            }
+                            Err(_) => return false,
+                        }
+                    }
+
+                    return true;
+                }
+            }
+        }
+
         false
     }
 }

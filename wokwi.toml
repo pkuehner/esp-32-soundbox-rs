@@ -1,8 +1,8 @@
 [wokwi]
 version = 1
 gdbServerPort = 3333
-elf = "target/riscv32imc-esp-espidf/debug/hello_world"
-firmware = "target/riscv32imc-esp-espidf/debug/hello_world"
+elf = "target/xtensa-esp32-espidf/debug/hello_world"
+firmware = "target/xtensa-esp32-espidf/debug/hello_world"
 [[contents]]
 path = "sdcard_files"
 target = "sd1"
