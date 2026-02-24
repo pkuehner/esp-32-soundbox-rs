@@ -1,0 +1,3 @@
+sclk = sck
+di = miso
+do = mosi
