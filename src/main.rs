@@ -43,7 +43,38 @@ fn main() {
     let i2s_bclk = peripherals.pins.gpio32;
     let i2s_dout = peripherals.pins.gpio25;
     let i2s_ws = peripherals.pins.gpio13;
-    let i2s_config = StdConfig::philips(44100, DataBitWidth::Bits16);
+    let header = match sd_fetcher.read_wave_file_header(file_name) {
+        Ok(header) => header,
+        Err(err) => {
+            log::error!("Failed to read WAV header for {}: {}", file_name, err);
+            return;
+        }
+    };
+
+    let bits_per_sample = match header.bits_per_sample {
+        8 => DataBitWidth::Bits8,
+        16 => DataBitWidth::Bits16,
+        24 => DataBitWidth::Bits24,
+        32 => DataBitWidth::Bits32,
+        other => {
+            log::error!("Unsupported bits per sample in WAV header: {}", other);
+            return;
+        }
+    };
+
+    if header.num_channels != 1 {
+        log::error!("Invalid channel count in WAV header! We only support Mono");
+        return;
+    }
+
+    log::info!(
+        "Configuring I2S from WAV header: {} Hz, {}-bit, {} channel(s)",
+        header.sample_rate,
+        header.bits_per_sample,
+        header.num_channels
+    );
+
+    let i2s_config = StdConfig::philips(header.sample_rate, bits_per_sample);
     let mut i2s = I2sDriver::<I2sTx>::new_std_tx(
         peripherals.i2s0,
         &i2s_config,
@@ -63,7 +94,7 @@ fn main() {
 
             log::info!("Motion Started");
             let ok = sd_fetcher
-                .stream_file_1024(file_name, |chunk| i2s.write_all(chunk, BLOCK).is_ok());
+                .stream_wav_file_1024(file_name, |chunk| i2s.write_all(chunk, BLOCK).is_ok());
 
             if !ok {
                 log::warn!("Failed to stream alert.raw to I2S");
