@@ -5,34 +5,34 @@ use esp_idf_sys::EspError;
 
 pub struct MotionSensor<'a, T: InputPin + OutputPin> {
     pin_driver: PinDriver<'a, T, Input>,
-    changed: Arc<AtomicBool>,
+    motion_started: Arc<AtomicBool>,
 }
 
 impl<'a, T: InputPin + OutputPin> MotionSensor<'a, T> {
     pub fn new(pin: T) -> Self {
         let mut sensor = Self {
             pin_driver: PinDriver::input(pin).unwrap(),
-            changed: Arc::new(AtomicBool::new(false)),
+            motion_started: Arc::new(AtomicBool::new(false)),
         };
         
-        sensor.pin_driver.set_pull(Pull::Up).unwrap();
+        sensor.pin_driver.set_pull(Pull::Down).unwrap();
         sensor.enable_change_interrupt().unwrap();
 
         sensor
     }
 
-    pub fn is_moving(&self) -> bool {
+    pub fn _is_moving(&self) -> bool {
         self.pin_driver.is_high()
     }
-
+    
     pub fn enable_change_interrupt(&mut self) -> Result<(), EspError> {
-        self.pin_driver.set_interrupt_type(InterruptType::AnyEdge)?;
+        self.pin_driver.set_interrupt_type(InterruptType::PosEdge)?;
 
-        let changed = Arc::clone(&self.changed);
+        let motion_started = Arc::clone(&self.motion_started);
 
         unsafe {
             self.pin_driver.subscribe(move || {
-                changed.store(true, Ordering::SeqCst);
+                motion_started.store(true, Ordering::SeqCst);
             })?;
         }
 
@@ -40,7 +40,11 @@ impl<'a, T: InputPin + OutputPin> MotionSensor<'a, T> {
         Ok(())
     }
 
-    pub fn take_changed(&self) -> bool {
-        self.changed.swap(false, Ordering::SeqCst)
+    pub fn take_motion_started(&self) -> bool {
+        self.motion_started.swap(false, Ordering::SeqCst)
+    }
+
+    pub fn rearm_interrupt(&mut self) -> Result<(), EspError> {
+        self.pin_driver.enable_interrupt()
     }
 }

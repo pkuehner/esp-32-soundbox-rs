@@ -1,6 +1,6 @@
 mod led;
-mod sensors;
 mod sd;
+mod sensors;
 use esp_idf_hal::delay::{FreeRtos, BLOCK};
 use esp_idf_hal::gpio::AnyIOPin;
 use esp_idf_hal::i2s::config::{DataBitWidth, StdConfig};
@@ -14,13 +14,12 @@ fn main() {
 
     // Bind the log crate to the ESP Logging facilities
     esp_idf_svc::log::EspLogger::initialize_default();
-    FreeRtos::delay_ms(1000);
 
     let peripherals = Peripherals::take().unwrap();
-    let motion_pin = peripherals.pins.gpio32;
+    let motion_pin = peripherals.pins.gpio22;
     log::info!("Creating Motion Sensor");
 
-    let motion_sensor = sensors::MotionSensor::new(motion_pin);
+    let mut motion_sensor = sensors::MotionSensor::new(motion_pin);
 
     log::info!("Motion Sensor Created");
 
@@ -35,14 +34,15 @@ fn main() {
 
     // Create low-lev
     let mut sd_fetcher = sd::SdFetcher::new(peripherals.spi2, sclk, mosi, miso, cs);
-    log::info!("{}", sd_fetcher.file_exists(file_name));
-    FreeRtos::delay_ms(1000);
-
+    
     log::info!("SD Created");
 
-    let i2s_bclk = peripherals.pins.gpio12; //ADJUST 
-    let i2s_dout = peripherals.pins.gpio22; //ADJUST
-    let i2s_ws = peripherals.pins.gpio25; //ADJUST
+    log::info!("Checking if file: {} exists:  {}", file_name, sd_fetcher.file_exists(file_name));
+
+
+    let i2s_bclk = peripherals.pins.gpio32;
+    let i2s_dout = peripherals.pins.gpio25;
+    let i2s_ws = peripherals.pins.gpio13;
     let i2s_config = StdConfig::philips(44100, DataBitWidth::Bits16);
     let mut i2s = I2sDriver::<I2sTx>::new_std_tx(
         peripherals.i2s0,
@@ -55,26 +55,20 @@ fn main() {
     .unwrap();
     i2s.tx_enable().unwrap();
 
-    let mut was_moving = false;
-
     loop {
-        let moving = motion_sensor.is_moving();
+        if motion_sensor.take_motion_started() {
+            if let Err(err) = motion_sensor.rearm_interrupt() {
+                log::warn!("Failed to re-arm motion interrupt: {:?}", err);
+            }
 
-        if moving && !was_moving {
-            log::info!("Motion On");
-            let ok = sd_fetcher.stream_file_1024(file_name, |chunk| {
-                i2s.write_all(chunk, BLOCK).is_ok()
-            });
+            log::info!("Motion Started");
+            let ok = sd_fetcher
+                .stream_file_1024(file_name, |chunk| i2s.write_all(chunk, BLOCK).is_ok());
 
             if !ok {
                 log::warn!("Failed to stream alert.raw to I2S");
             }
-        } else {
-            log::info!("Motion Off");
         }
-
-        was_moving = moving;
-        FreeRtos::delay_ms(1000);       // non-busy wait
+        FreeRtos::delay_ms(500); // non-busy wait
     }
 }
-
