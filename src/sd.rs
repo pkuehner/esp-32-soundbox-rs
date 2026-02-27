@@ -1,105 +1,13 @@
 use esp_idf_hal::{
-    delay::FreeRtos,
     gpio::{AnyIOPin, InputPin, OutputPin},
     sd::{spi::SdSpiHostDriver, SdCardConfiguration, SdCardDriver},
     spi::{Dma, SPI2, SpiDriver, SpiDriverConfig},
-    task,
 };
 use esp_idf_svc::fs::fatfs::Fatfs;
 use esp_idf_svc::io::vfs::MountedFatfs;
 use esp_idf_svc::sys::EspError;
 use std::fs::File;
 use std::io::Read;
-
-const FREERTOS_STREAM_CHUNK_BYTES: usize = 4096;
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct StreamChunk {
-    len: u32,
-    done: u8,
-    ok: u8,
-    _reserved: [u8; 2],
-    data: [u8; FREERTOS_STREAM_CHUNK_BYTES],
-}
-
-impl StreamChunk {
-    fn new_data(chunk: &[u8]) -> Self {
-        let mut message = Self {
-            len: chunk.len() as u32,
-            done: 0,
-            ok: 1,
-            _reserved: [0; 2],
-            data: [0; FREERTOS_STREAM_CHUNK_BYTES],
-        };
-
-        message.data[..chunk.len()].copy_from_slice(chunk);
-        message
-    }
-
-    fn new_done(ok: bool) -> Self {
-        Self {
-            len: 0,
-            done: 1,
-            ok: if ok { 1 } else { 0 },
-            _reserved: [0; 2],
-            data: [0; FREERTOS_STREAM_CHUNK_BYTES],
-        }
-    }
-}
-
-struct ReaderTaskCtx {
-    fetcher: *mut core::ffi::c_void,
-    queue: esp_idf_sys::QueueHandle_t,
-    file_name: String,
-}
-
-extern "C" fn reader_task_entry(arg: *mut core::ffi::c_void) {
-    let ctx = unsafe { Box::from_raw(arg as *mut ReaderTaskCtx) };
-
-    let fetcher = unsafe { &mut *(ctx.fetcher as *mut SdFetcher<'static>) };
-
-    let send_chunk = |message: &StreamChunk| -> bool {
-        if ctx.queue.is_null() {
-            return false;
-        }
-
-        let max_retries = 10_000u32;
-
-        for _ in 0..max_retries {
-            let sent = unsafe {
-                esp_idf_sys::xQueueGenericSend(
-                    ctx.queue,
-                    message as *const _ as *const core::ffi::c_void,
-                    0,
-                    0,
-                )
-            };
-
-            if sent != 0 {
-                return true;
-            }
-
-            FreeRtos::delay_ms(1);
-        }
-
-        false
-    };
-
-    let ok = fetcher.stream_wav_file_buf(&ctx.file_name, FREERTOS_STREAM_CHUNK_BYTES, |chunk| {
-        if chunk.len() > FREERTOS_STREAM_CHUNK_BYTES {
-            return false;
-        }
-
-        let message = StreamChunk::new_data(chunk);
-        send_chunk(&message)
-    });
-
-    let done = StreamChunk::new_done(ok);
-    let _ = send_chunk(&done);
-
-    unsafe { esp_idf_sys::vTaskDelete(core::ptr::null_mut()) };
-}
 
 type MountedSd<'d> = MountedFatfs<Fatfs<SdCardDriver<SdSpiHostDriver<'d, SpiDriver<'d>>>>>;
 
@@ -212,81 +120,6 @@ impl<'d> SdFetcher<'d> {
         }
 
         true
-    }
-
-    pub fn stream_wav_file_freertos<F>(&mut self, file_name: &str, mut on_chunk: F) -> bool
-    where
-        F: FnMut(&[u8]) -> bool,
-    {
-        let queue = unsafe {
-            esp_idf_sys::xQueueGenericCreate(
-                2,
-                core::mem::size_of::<StreamChunk>() as esp_idf_sys::UBaseType_t,
-                0,
-            )
-        };
-
-        if queue.is_null() {
-            log::error!("Failed to create FreeRTOS queue for WAV streaming");
-            return false;
-        }
-
-        let task_ctx = Box::new(ReaderTaskCtx {
-            fetcher: self as *mut _ as *mut core::ffi::c_void,
-            queue,
-            file_name: file_name.to_owned(),
-        });
-
-        let task_name = core::ffi::CStr::from_bytes_with_nul(b"wav_reader\0").unwrap();
-
-        let created = unsafe {
-            task::create(
-                reader_task_entry,
-                task_name,
-                16384,
-                Box::into_raw(task_ctx) as *mut core::ffi::c_void,
-                5,
-                None,
-            )
-        };
-
-        if created.is_err() {
-            unsafe { esp_idf_sys::vQueueDelete(queue) };
-            log::error!("Failed to create FreeRTOS reader task");
-            return false;
-        }
-
-        let mut overall_ok = true;
-
-        loop {
-            let mut message = StreamChunk::new_done(false);
-            let received = unsafe {
-                esp_idf_sys::xQueueReceive(
-                    queue,
-                    &mut message as *mut _ as *mut core::ffi::c_void,
-                    0,
-                )
-            };
-
-            if received == 0 {
-                FreeRtos::delay_ms(1);
-                continue;
-            }
-
-            if message.done != 0 {
-                overall_ok = overall_ok && message.ok != 0;
-                break;
-            }
-
-            if !on_chunk(&message.data[..message.len as usize]) {
-                overall_ok = false;
-            }
-        }
-
-        // Give producer task a moment to exit after sending done marker.
-        FreeRtos::delay_ms(10);
-        unsafe { esp_idf_sys::vQueueDelete(queue) };
-        overall_ok
     }
 }
 

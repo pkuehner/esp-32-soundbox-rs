@@ -3,11 +3,10 @@ mod sd;
 mod sensors;
 use esp_idf_hal::delay::{FreeRtos, BLOCK};
 use esp_idf_hal::gpio::AnyIOPin;
+use esp_idf_hal::i2s::config::Config as I2sChannelConfig;
 use esp_idf_hal::i2s::config::{DataBitWidth, SlotMode, StdConfig, StdSlotConfig, StdSlotMask};
 use esp_idf_hal::i2s::{I2sDriver, I2sTx};
 use esp_idf_hal::peripherals::Peripherals;
-use esp_idf_hal::i2s::config::Config as I2sChannelConfig;
-
 
 fn main() {
     // It is necessary to call this function once. Otherwise, some patches to the runtime
@@ -45,11 +44,14 @@ fn main() {
             return;
         }
     };
-    
+
     log::info!("SD Created");
 
-    log::info!("Checking if file: {} exists:  {}", file_name, sd_fetcher.file_exists(file_name));
-
+    log::info!(
+        "Checking if file: {} exists:  {}",
+        file_name,
+        sd_fetcher.file_exists(file_name)
+    );
 
     let i2s_bclk = peripherals.pins.gpio32;
     let i2s_dout = peripherals.pins.gpio25;
@@ -107,10 +109,6 @@ fn main() {
 
     loop {
         if motion_sensor.take_motion_started() {
-            if let Err(err) = motion_sensor.rearm_interrupt() {
-                log::warn!("Failed to re-arm motion interrupt: {:?}", err);
-            }
-
             if !i2s_enabled {
                 if let Err(err) = i2s.tx_enable() {
                     log::error!("Failed to enable I2S TX: {:?}", err);
@@ -122,20 +120,27 @@ fn main() {
 
             log::info!("Motion Started");
 
-            let ok = sd_fetcher.stream_wav_file_freertos(file_name, |chunk| {
+            let ok = sd_fetcher.stream_wav_file_buf(file_name, 4096,|chunk| {
                 let res = i2s.write_all(chunk, BLOCK).is_ok();
                 res
             });
 
+            if i2s_enabled {
+                if let Err(err) = i2s.tx_disable() {
+                    log::warn!("Failed to disable I2S TX: {:?}", err);
+                } else {
+                    i2s_enabled = false;
+                }
+            }
             if !ok {
                 log::warn!("Failed to stream alert.raw to I2S");
             }
-        } else if i2s_enabled {
-            if let Err(err) = i2s.tx_disable() {
-                log::warn!("Failed to disable I2S TX: {:?}", err);
+            if let Err(err) = motion_sensor.rearm_interrupt() {
+                log::warn!("Failed to re-arm motion interrupt: {:?}", err);
             } else {
-                i2s_enabled = false;
+                log::info!("Motion Interrupt re-armed!");
             }
+
         }
         FreeRtos::delay_ms(500); // non-busy wait
     }
