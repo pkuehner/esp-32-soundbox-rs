@@ -1,136 +1,292 @@
-use embedded_hal_bus::spi::ExclusiveDevice;
-use embedded_sdmmc::{Mode, SdCard, TimeSource, Timestamp, VolumeIdx, VolumeManager};
 use esp_idf_hal::{
     delay::FreeRtos,
-    gpio::{InputPin, Output, OutputPin, PinDriver},
-    spi::{self, SpiDriver, SPI2},
+    gpio::{AnyIOPin, InputPin, OutputPin},
+    sd::{spi::SdSpiHostDriver, SdCardConfiguration, SdCardDriver},
+    spi::{Dma, SPI2, SpiDriver, SpiDriverConfig},
+    task,
 };
+use esp_idf_svc::fs::fatfs::Fatfs;
+use esp_idf_svc::io::vfs::MountedFatfs;
+use esp_idf_svc::sys::EspError;
+use std::fs::File;
+use std::io::Read;
 
-type SdDev<'d, T4> = SdCard<
-    ExclusiveDevice<spi::SpiBusDriver<'d, SpiDriver<'d>>, PinDriver<'d, T4, Output>, FreeRtos>,
-    FreeRtos,
->;
+const FREERTOS_STREAM_CHUNK_BYTES: usize = 4096;
 
-type Vm<'d, T4> = VolumeManager<SdDev<'d, T4>, DummyTimesource, 4, 4, 1>;
-
-pub struct SdFetcher<'d, T4: OutputPin> {
-    volume_mgr: Vm<'d, T4>,
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct StreamChunk {
+    len: u32,
+    done: u8,
+    ok: u8,
+    _reserved: [u8; 2],
+    data: [u8; FREERTOS_STREAM_CHUNK_BYTES],
 }
 
-impl<'d, T4: OutputPin> SdFetcher<'d, T4> {
-    pub fn new<T1, T2, T3>(spi2: SPI2, sclk: T1, mosi: T2, miso: T3, cs: T4) -> Self
+impl StreamChunk {
+    fn new_data(chunk: &[u8]) -> Self {
+        let mut message = Self {
+            len: chunk.len() as u32,
+            done: 0,
+            ok: 1,
+            _reserved: [0; 2],
+            data: [0; FREERTOS_STREAM_CHUNK_BYTES],
+        };
+
+        message.data[..chunk.len()].copy_from_slice(chunk);
+        message
+    }
+
+    fn new_done(ok: bool) -> Self {
+        Self {
+            len: 0,
+            done: 1,
+            ok: if ok { 1 } else { 0 },
+            _reserved: [0; 2],
+            data: [0; FREERTOS_STREAM_CHUNK_BYTES],
+        }
+    }
+}
+
+struct ReaderTaskCtx {
+    fetcher: *mut core::ffi::c_void,
+    queue: esp_idf_sys::QueueHandle_t,
+    file_name: String,
+}
+
+extern "C" fn reader_task_entry(arg: *mut core::ffi::c_void) {
+    let ctx = unsafe { Box::from_raw(arg as *mut ReaderTaskCtx) };
+
+    let fetcher = unsafe { &mut *(ctx.fetcher as *mut SdFetcher<'static>) };
+
+    let send_chunk = |message: &StreamChunk| -> bool {
+        if ctx.queue.is_null() {
+            return false;
+        }
+
+        let max_retries = 10_000u32;
+
+        for _ in 0..max_retries {
+            let sent = unsafe {
+                esp_idf_sys::xQueueGenericSend(
+                    ctx.queue,
+                    message as *const _ as *const core::ffi::c_void,
+                    0,
+                    0,
+                )
+            };
+
+            if sent != 0 {
+                return true;
+            }
+
+            FreeRtos::delay_ms(1);
+        }
+
+        false
+    };
+
+    let ok = fetcher.stream_wav_file_buf(&ctx.file_name, FREERTOS_STREAM_CHUNK_BYTES, |chunk| {
+        if chunk.len() > FREERTOS_STREAM_CHUNK_BYTES {
+            return false;
+        }
+
+        let message = StreamChunk::new_data(chunk);
+        send_chunk(&message)
+    });
+
+    let done = StreamChunk::new_done(ok);
+    let _ = send_chunk(&done);
+
+    unsafe { esp_idf_sys::vTaskDelete(core::ptr::null_mut()) };
+}
+
+type MountedSd<'d> = MountedFatfs<Fatfs<SdCardDriver<SdSpiHostDriver<'d, SpiDriver<'d>>>>>;
+
+pub struct SdFetcher<'d> {
+    _mounted: MountedSd<'d>,
+}
+
+impl<'d> SdFetcher<'d> {
+    pub fn new<T1, T2, T3, T4>(
+        spi2: SPI2,
+        sclk: T1,
+        mosi: T2,
+        miso: T3,
+        cs: T4,
+    ) -> Result<Self, EspError>
     where
         T1: OutputPin,
         T2: OutputPin,
         T3: InputPin,
+        T4: OutputPin,
     {
-        let spi_driver = spi::SpiDriver::new(
+        let spi_driver = SpiDriver::new(
             spi2,
             sclk,
             mosi,
             Some(miso),
-            &spi::config::DriverConfig::default(),
-        )
-        .unwrap();
+            &SpiDriverConfig::new().dma(Dma::Auto(8192)),
+        )?;
 
-        let spi_bus = spi::SpiBusDriver::new(spi_driver, &spi::config::Config::default()).unwrap();
+        let sd_host_driver = SdSpiHostDriver::new(
+            spi_driver,
+            Some(cs),
+            AnyIOPin::none(),
+            AnyIOPin::none(),
+            AnyIOPin::none(),
+            None,
+        )?;
 
-        let sd_cs = PinDriver::output(cs).unwrap();
-        let spi_dev = ExclusiveDevice::new(spi_bus, sd_cs, FreeRtos).unwrap();
-        let sdcard = SdCard::new(spi_dev, FreeRtos);
+        let mut sd_cfg = SdCardConfiguration::new();
+        sd_cfg.speed_khz = 4_000;
+        sd_cfg.command_timeout_ms = 2_000;
 
-        let volume_mgr = VolumeManager::new(sdcard, DummyTimesource());
-        Self { volume_mgr }
+        let card_driver = SdCardDriver::new_spi(sd_host_driver, &sd_cfg)?;
+        let fatfs = Fatfs::new_sdcard(0, card_driver)?;
+        let mounted = MountedFatfs::mount(fatfs, "/sdcard", 5)?;
+
+        Ok(Self { _mounted: mounted })
+    }
+
+    fn full_path(file_name: &str) -> String {
+        format!("/sdcard/{file_name}")
     }
 
     // Do operations here; avoid returning handles that outlive temporary borrows.
     pub fn file_exists(&mut self, file_name: &str) -> bool {
-        let volume = self.volume_mgr.open_volume(VolumeIdx(0));
-        if let Ok(volume) = volume {
-            if let Ok(root) = volume.open_root_dir() {
-                return root.open_file_in_dir(file_name, Mode::ReadOnly).is_ok();
-            }
-        }
-        false
+        std::fs::metadata(Self::full_path(file_name)).is_ok()
     }
 
     pub fn read_wave_file_header(&mut self, file_name: &str) -> Result<WaveHeader, String> {
-        let volume = self.volume_mgr.open_volume(VolumeIdx(0));
+        let path = Self::full_path(file_name);
+        let mut file = File::open(path).map_err(|_| "Could not read file".to_owned())?;
 
-        if let Ok(volume) = volume {
-            if let Ok(root) = volume.open_root_dir() {
-                if let Ok(file) = root.open_file_in_dir(file_name, Mode::ReadOnly) {
-                    if file.length() < 44 {
-                        log::info!("Not a wav file");
-                        return Err("Not a wav file".to_owned());
-                    }
+        let mut buffer_header = [0_u8; 44];
+        file.read_exact(&mut buffer_header)
+            .map_err(|_| "Not a wav file".to_owned())?;
 
-                    let mut buffer_header = [0_u8; 44];
-                    file.read(&mut buffer_header).unwrap();
-
-                    return WaveHeader::from_bytes(buffer_header);
-                }
-            }
-        }
-
-        return Err("Could not read file".to_owned());
+        WaveHeader::from_bytes(buffer_header)
     }
 
-    pub fn stream_wav_file_1024<F>(&mut self, file_name: &str, mut on_chunk: F) -> bool
+
+    /// Stream wav file with configurable ping-pong buffers.
+    pub fn stream_wav_file_buf<F>(&mut self, file_name: &str, buf_size: usize, mut on_chunk: F) -> bool
     where
         F: FnMut(&[u8]) -> bool,
     {
-        let volume = self.volume_mgr.open_volume(VolumeIdx(0));
+        let path = Self::full_path(file_name);
+        let mut file = match File::open(path) {
+            Ok(file) => file,
+            Err(_) => return false,
+        };
 
-        if let Ok(volume) = volume {
-            if let Ok(root) = volume.open_root_dir() {
-                if let Ok(file) = root.open_file_in_dir(file_name, Mode::ReadOnly) {
-                    let mut buffer = [0_u8; 1024];
-                    if file.length() < 44 {
-                        log::info!("Not a wav file");
-                        return false;
-                    }
+        let mut buffer_header = [0_u8; 44];
+        if file.read_exact(&mut buffer_header).is_err() {
+            log::info!("Not a wav file");
+            return false;
+        }
 
-                    let mut buffer_header = [0_u8; 44];
-                    file.read(&mut buffer_header).unwrap();
+        let mut buffer_a = vec![0_u8; buf_size];
+        let mut buffer_b = vec![0_u8; buf_size];
 
-                    while !file.is_eof() {
-                        match file.read(&mut buffer) {
-                            Ok(0) => break,
-                            Ok(read_len) => {
-                                if !on_chunk(&buffer[..read_len]) {
-                                    return false;
-                                }
-                            }
-                            Err(_) => return false,
-                        }
-                    }
+        let mut current_len = match file.read(&mut buffer_a) {
+            Ok(0) => return true,
+            Ok(read_len) => read_len,
+            Err(_) => return false,
+        };
 
-                    return true;
-                }
+        loop {
+            if !on_chunk(&buffer_a[..current_len]) {
+                return false;
+            }
+
+            let next_len = match file.read(&mut buffer_b) {
+                Ok(0) => break,
+                Ok(read_len) => read_len,
+                Err(_) => return false,
+            };
+
+            core::mem::swap(&mut buffer_a, &mut buffer_b);
+            current_len = next_len;
+        }
+
+        true
+    }
+
+    pub fn stream_wav_file_freertos<F>(&mut self, file_name: &str, mut on_chunk: F) -> bool
+    where
+        F: FnMut(&[u8]) -> bool,
+    {
+        let queue = unsafe {
+            esp_idf_sys::xQueueGenericCreate(
+                2,
+                core::mem::size_of::<StreamChunk>() as esp_idf_sys::UBaseType_t,
+                0,
+            )
+        };
+
+        if queue.is_null() {
+            log::error!("Failed to create FreeRTOS queue for WAV streaming");
+            return false;
+        }
+
+        let task_ctx = Box::new(ReaderTaskCtx {
+            fetcher: self as *mut _ as *mut core::ffi::c_void,
+            queue,
+            file_name: file_name.to_owned(),
+        });
+
+        let task_name = core::ffi::CStr::from_bytes_with_nul(b"wav_reader\0").unwrap();
+
+        let created = unsafe {
+            task::create(
+                reader_task_entry,
+                task_name,
+                16384,
+                Box::into_raw(task_ctx) as *mut core::ffi::c_void,
+                5,
+                None,
+            )
+        };
+
+        if created.is_err() {
+            unsafe { esp_idf_sys::vQueueDelete(queue) };
+            log::error!("Failed to create FreeRTOS reader task");
+            return false;
+        }
+
+        let mut overall_ok = true;
+
+        loop {
+            let mut message = StreamChunk::new_done(false);
+            let received = unsafe {
+                esp_idf_sys::xQueueReceive(
+                    queue,
+                    &mut message as *mut _ as *mut core::ffi::c_void,
+                    0,
+                )
+            };
+
+            if received == 0 {
+                FreeRtos::delay_ms(1);
+                continue;
+            }
+
+            if message.done != 0 {
+                overall_ok = overall_ok && message.ok != 0;
+                break;
+            }
+
+            if !on_chunk(&message.data[..message.len as usize]) {
+                overall_ok = false;
             }
         }
 
-        false
-    }
-}
-
-/// A dummy timesource, which is mostly important for creating files.
-#[derive(Default)]
-struct DummyTimesource();
-
-impl TimeSource for DummyTimesource {
-    // In theory you could use the RTC of the rp2040 here, if you had
-    // any external time synchronizing device.
-    fn get_timestamp(&self) -> Timestamp {
-        Timestamp {
-            year_since_1970: 0,
-            zero_indexed_month: 0,
-            zero_indexed_day: 0,
-            hours: 0,
-            minutes: 0,
-            seconds: 0,
-        }
+        // Give producer task a moment to exit after sending done marker.
+        FreeRtos::delay_ms(10);
+        unsafe { esp_idf_sys::vQueueDelete(queue) };
+        overall_ok
     }
 }
 

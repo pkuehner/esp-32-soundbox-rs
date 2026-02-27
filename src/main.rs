@@ -3,9 +3,11 @@ mod sd;
 mod sensors;
 use esp_idf_hal::delay::{FreeRtos, BLOCK};
 use esp_idf_hal::gpio::AnyIOPin;
-use esp_idf_hal::i2s::config::{DataBitWidth, StdConfig};
+use esp_idf_hal::i2s::config::{DataBitWidth, SlotMode, StdConfig, StdSlotConfig, StdSlotMask};
 use esp_idf_hal::i2s::{I2sDriver, I2sTx};
 use esp_idf_hal::peripherals::Peripherals;
+use esp_idf_hal::i2s::config::Config as I2sChannelConfig;
+
 
 fn main() {
     // It is necessary to call this function once. Otherwise, some patches to the runtime
@@ -33,7 +35,16 @@ fn main() {
     log::info!("Creating SD");
 
     // Create low-lev
-    let mut sd_fetcher = sd::SdFetcher::new(peripherals.spi2, sclk, mosi, miso, cs);
+    let mut sd_fetcher = match sd::SdFetcher::new(peripherals.spi2, sclk, mosi, miso, cs) {
+        Ok(sd) => sd,
+        Err(err) => {
+            log::error!(
+                "Failed to initialize SD card over SPI (check wiring and lower clock). Error: {}",
+                err
+            );
+            return;
+        }
+    };
     
     log::info!("SD Created");
 
@@ -74,7 +85,15 @@ fn main() {
         header.num_channels
     );
 
-    let i2s_config = StdConfig::philips(header.sample_rate, bits_per_sample);
+    let channel_cfg = I2sChannelConfig::default();
+
+    let i2s_config = StdConfig::new(
+        channel_cfg,
+        esp_idf_hal::i2s::config::StdClkConfig::from_sample_rate_hz(header.sample_rate),
+        StdSlotConfig::philips_slot_default(bits_per_sample, SlotMode::Mono)
+            .slot_mode_mask(SlotMode::Mono, StdSlotMask::Left),
+        Default::default(),
+    );
     let mut i2s = I2sDriver::<I2sTx>::new_std_tx(
         peripherals.i2s0,
         &i2s_config,
@@ -84,7 +103,7 @@ fn main() {
         i2s_ws,
     )
     .unwrap();
-    i2s.tx_enable().unwrap();
+    let mut i2s_enabled = false;
 
     loop {
         if motion_sensor.take_motion_started() {
@@ -92,12 +111,30 @@ fn main() {
                 log::warn!("Failed to re-arm motion interrupt: {:?}", err);
             }
 
+            if !i2s_enabled {
+                if let Err(err) = i2s.tx_enable() {
+                    log::error!("Failed to enable I2S TX: {:?}", err);
+                    FreeRtos::delay_ms(500);
+                    continue;
+                }
+                i2s_enabled = true;
+            }
+
             log::info!("Motion Started");
-            let ok = sd_fetcher
-                .stream_wav_file_1024(file_name, |chunk| i2s.write_all(chunk, BLOCK).is_ok());
+
+            let ok = sd_fetcher.stream_wav_file_freertos(file_name, |chunk| {
+                let res = i2s.write_all(chunk, BLOCK).is_ok();
+                res
+            });
 
             if !ok {
                 log::warn!("Failed to stream alert.raw to I2S");
+            }
+        } else if i2s_enabled {
+            if let Err(err) = i2s.tx_disable() {
+                log::warn!("Failed to disable I2S TX: {:?}", err);
+            } else {
+                i2s_enabled = false;
             }
         }
         FreeRtos::delay_ms(500); // non-busy wait
