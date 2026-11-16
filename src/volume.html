@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Soundbox settings</title>
+  <style>
+    body { font: 1.1rem system-ui, sans-serif; max-width: 32rem; margin: 3rem auto; padding: 0 1rem; }
+    input[type="range"] { width: 100%; }
+    input[type="number"] { width: 6rem; }
+  </style>
+</head>
+<body>
+  <h1>Soundbox settings</h1>
+  <label for="volume">Volume: <output id="value">--</output>%</label>
+  <input id="volume" type="range" min="0" max="100" disabled>
+  <p id="status" role="status">Loading...</p>
+  <form id="rearm-form">
+    <label for="rearm">Motion re-arm delay (seconds, 0–600)</label>
+    <input id="rearm" type="number" min="0" max="600" step="1" required disabled>
+    <button id="save-rearm" type="submit" disabled>Save</button>
+  </form>
+  <p>The delay starts when motion is detected. The sensor is re-armed after both playback and the delay finish.</p>
+  <p id="rearm-status" role="status">Loading...</p>
+  <section>
+    <h2>SD card files</h2>
+    <p>Upload <strong>mono PCM WAV files only</strong> (8, 16, 24 or 32-bit). Stereo and compressed WAV files are not supported.</p>
+    <p>Choose an SD card name with 1–8 letters, digits, underscores or hyphens, followed by .wav. Existing files are not overwritten.</p>
+    <form id="upload-form">
+      <label for="upload-file">WAV file</label>
+      <input id="upload-file" type="file" accept=".wav,audio/wav,audio/x-wav" required>
+      <label for="upload-name">SD card filename</label>
+      <input id="upload-name" type="text" maxlength="12" pattern="[A-Za-z0-9_-]{1,8}\.[Ww][Aa][Vv]" placeholder="sound.wav" required>
+      <button id="upload-button" type="submit">Upload</button>
+    </form>
+    <p id="file-status" role="status">Loading files...</p>
+    <button id="refresh-files" type="button">Refresh list</button>
+    <ul id="file-list"></ul>
+  </section>
+  <script>
+    const slider = document.getElementById("volume");
+    const value = document.getElementById("value");
+    const status = document.getElementById("status");
+    slider.addEventListener("input", () => { value.textContent = slider.value; });
+    slider.addEventListener("change", async () => {
+      slider.disabled = true;
+      status.textContent = "Saving...";
+      try {
+        const response = await fetch("/volume", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: slider.value
+        });
+        if (!response.ok) throw new Error("Save failed");
+        status.textContent = "Saved";
+      } catch (error) {
+        status.textContent = "Could not save volume. Adjust the slider to retry.";
+      } finally {
+        slider.disabled = false;
+      }
+    });
+    async function load() {
+      try {
+        const response = await fetch("/volume", { cache: "no-store" });
+        if (!response.ok) throw new Error("Load failed");
+        slider.value = await response.text();
+        value.textContent = slider.value;
+        slider.disabled = false;
+        status.textContent = "Adjust the slider to change the volume.";
+      } catch (error) {
+        status.textContent = "Could not load volume. Reload the page to retry.";
+      }
+    }
+    load();
+
+    const rearm = document.getElementById("rearm");
+    const rearmForm = document.getElementById("rearm-form");
+    const rearmButton = document.getElementById("save-rearm");
+    const rearmStatus = document.getElementById("rearm-status");
+
+    rearmForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!rearm.reportValidity()) return;
+      rearm.disabled = true;
+      rearmButton.disabled = true;
+      rearmStatus.textContent = "Saving...";
+      try {
+        const response = await fetch("/rearm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: String(Number(rearm.value))
+        });
+        if (!response.ok) throw new Error("Save failed");
+        rearmStatus.textContent = "Saved";
+      } catch (error) {
+        rearmStatus.textContent = "Could not save delay. Try again.";
+      } finally {
+        rearm.disabled = false;
+        rearmButton.disabled = false;
+      }
+    });
+
+    async function loadRearm() {
+      try {
+        const response = await fetch("/rearm", { cache: "no-store" });
+        if (!response.ok) throw new Error("Load failed");
+        rearm.value = await response.text();
+        rearm.disabled = false;
+        rearmButton.disabled = false;
+        rearmStatus.textContent = "Enter a delay and select Save.";
+      } catch (error) {
+        rearmStatus.textContent = "Could not load delay. Reload the page to retry.";
+      }
+    }
+    loadRearm();
+
+    const fileInput = document.getElementById("upload-file");
+    const fileName = document.getElementById("upload-name");
+    const fileStatus = document.getElementById("file-status");
+    const fileList = document.getElementById("file-list");
+    const uploadButton = document.getElementById("upload-button");
+    const refreshButton = document.getElementById("refresh-files");
+
+    fileInput.addEventListener("change", () => {
+      fileName.value = fileInput.files.length ? fileInput.files[0].name : "";
+    });
+
+    async function refreshFiles() {
+      fileStatus.textContent = "Loading files...";
+      try {
+        const response = await fetch("/files", { cache: "no-store" });
+        if (!response.ok) throw new Error(await response.text());
+        const files = await response.json();
+        fileList.replaceChildren();
+        for (const name of files) {
+          const item = document.createElement("li");
+          const label = document.createElement("span");
+          label.textContent = name + " ";
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = "Delete";
+          button.setAttribute("aria-label", "Delete " + name);
+          button.addEventListener("click", async () => {
+            if (!confirm("Permanently delete " + name + " from the SD card?")) return;
+            button.disabled = true;
+            fileStatus.textContent = "Deleting...";
+            try {
+              const response = await fetch("/files", {
+                method: "DELETE",
+                headers: { "Content-Type": "application/octet-stream" },
+                body: new TextEncoder().encode(name)
+              });
+              if (!response.ok) throw new Error(await response.text());
+              await refreshFiles();
+            } catch (error) {
+              fileStatus.textContent = "Delete failed: " + error.message;
+              button.disabled = false;
+            }
+          });
+          item.append(label, button);
+          fileList.append(item);
+        }
+        fileStatus.textContent = files.length ? "Files on the SD card:" : "No files on the SD card.";
+      } catch (error) {
+        fileStatus.textContent = "Could not load files: " + error.message;
+      }
+    }
+
+    document.getElementById("upload-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!fileInput.files.length || !event.currentTarget.reportValidity()) return;
+      uploadButton.disabled = true;
+      refreshButton.disabled = true;
+      fileStatus.textContent = "Uploading and validating; please wait...";
+      try {
+        const response = await fetch("/files", {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream", "X-Filename": fileName.value },
+          body: fileInput.files[0]
+        });
+        if (!response.ok) throw new Error(await response.text());
+        fileInput.value = "";
+        fileName.value = "";
+        await refreshFiles();
+        fileStatus.textContent = "Upload complete. " + fileStatus.textContent;
+      } catch (error) {
+        fileStatus.textContent = "Upload failed: " + error.message;
+      } finally {
+        uploadButton.disabled = false;
+        refreshButton.disabled = false;
+      }
+    });
+    refreshButton.addEventListener("click", refreshFiles);
+    refreshFiles();
+  </script>
+</body>
+</html>

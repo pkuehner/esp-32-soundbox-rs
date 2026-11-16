@@ -1,7 +1,8 @@
+use crate::wav::WaveHeader;
 use esp_idf_hal::{
     gpio::{AnyIOPin, InputPin, OutputPin},
     sd::{spi::SdSpiHostDriver, SdCardConfiguration, SdCardDriver},
-    spi::{Dma, SPI2, SpiDriver, SpiDriverConfig},
+    spi::{Dma, SpiDriver, SpiDriverConfig, SPI2},
 };
 use esp_idf_svc::fs::fatfs::Fatfs;
 use esp_idf_svc::io::vfs::MountedFatfs;
@@ -61,25 +62,36 @@ impl<'d> SdFetcher<'d> {
         format!("/sdcard/{file_name}")
     }
 
-    // Do operations here; avoid returning handles that outlive temporary borrows.
-    pub fn file_exists(&mut self, file_name: &str) -> bool {
-        std::fs::metadata(Self::full_path(file_name)).is_ok()
+    pub fn playable_files(&mut self) -> std::io::Result<Vec<String>> {
+        let mut files = Vec::new();
+        for entry in std::fs::read_dir("/sdcard")? {
+            let entry = entry?;
+            if let Some(name) = entry.file_name().to_str() {
+                if crate::uploads::is_temporary_name(name) {
+                    continue;
+                }
+                match self.read_wave_file_header(name) {
+                    Ok(_) => files.push(name.to_owned()),
+                    Err(err) => log::warn!("Skipping {}: {}", name, err),
+                }
+            }
+        }
+        Ok(files)
     }
 
     pub fn read_wave_file_header(&mut self, file_name: &str) -> Result<WaveHeader, String> {
         let path = Self::full_path(file_name);
         let mut file = File::open(path).map_err(|_| "Could not read file".to_owned())?;
-
-        let mut buffer_header = [0_u8; 44];
-        file.read_exact(&mut buffer_header)
-            .map_err(|_| "Not a wav file".to_owned())?;
-
-        WaveHeader::from_bytes(buffer_header)
+        WaveHeader::read(&mut file).map_err(|err| err.to_string())
     }
 
-
     /// Stream wav file with configurable ping-pong buffers.
-    pub fn stream_wav_file_buf<F>(&mut self, file_name: &str, buf_size: usize, mut on_chunk: F) -> bool
+    pub fn stream_wav_file_buf<F>(
+        &mut self,
+        file_name: &str,
+        buf_size: usize,
+        mut on_chunk: F,
+    ) -> bool
     where
         F: FnMut(&[u8]) -> bool,
     {
@@ -89,11 +101,11 @@ impl<'d> SdFetcher<'d> {
             Err(_) => return false,
         };
 
-        let mut buffer_header = [0_u8; 44];
-        if file.read_exact(&mut buffer_header).is_err() {
-            log::info!("Not a wav file");
-            return false;
-        }
+        let header = match WaveHeader::read(&mut file) {
+            Ok(header) => header,
+            Err(_) => return false,
+        };
+        let mut file = file.take(u64::from(header.data_len));
 
         let mut buffer_a = vec![0_u8; buf_size];
         let mut buffer_b = vec![0_u8; buf_size];
@@ -120,72 +132,5 @@ impl<'d> SdFetcher<'d> {
         }
 
         true
-    }
-}
-
-pub struct WaveHeader {
-    pub num_channels: u16,    // starts at 22
-    pub sample_rate: u32,     // starts at 24
-    pub bits_per_sample: u16, // starts at 34
-}
-
-impl WaveHeader {
-    fn from_bytes(buffer: [u8; 44]) -> Result<Self, String> {
-        let num_channels: u16 = u16::from_le_bytes(
-            buffer[22..24]
-                .try_into()
-            .map_err(|_| "Invalid channel data".to_owned())?,
-        );
-        let sample_rate: u32 = u32::from_le_bytes(
-            buffer[24..28]
-                .try_into()
-            .map_err(|_| "Invalid sample rate data".to_owned())?,
-        );
-        let bits_per_sample: u16 = u16::from_le_bytes(
-            buffer[34..36]
-                .try_into()
-            .map_err(|_| "Invalid bits per sample data".to_owned())?,
-        );
-        return Ok(WaveHeader {
-            num_channels,
-            sample_rate,
-            bits_per_sample,
-        });
-    }
-}
-
-#[cfg(test)]
-#[allow(dead_code, unused_imports)]
-mod tests {
-    use super::WaveHeader;
-
-    fn make_header(num_channels: u16, sample_rate: u32, bits_per_sample: u16) -> [u8; 44] {
-        let mut header = [0u8; 44];
-
-        header[22..24].copy_from_slice(&num_channels.to_le_bytes());
-        header[24..28].copy_from_slice(&sample_rate.to_le_bytes());
-        header[34..36].copy_from_slice(&bits_per_sample.to_le_bytes());
-
-        header
-    }
-
-    #[test]
-    fn parses_16bit_stereo_44k1() {
-        let header = make_header(2, 44_100, 16);
-        let parsed = WaveHeader::from_bytes(header).unwrap();
-
-        assert_eq!(parsed.num_channels, 2);
-        assert_eq!(parsed.sample_rate, 44_100);
-        assert_eq!(parsed.bits_per_sample, 16);
-    }
-
-    #[test]
-    fn parses_24bit_mono_48k() {
-        let header = make_header(1, 48_000, 24);
-        let parsed = WaveHeader::from_bytes(header).unwrap();
-
-        assert_eq!(parsed.num_channels, 1);
-        assert_eq!(parsed.sample_rate, 48_000);
-        assert_eq!(parsed.bits_per_sample, 24);
     }
 }
