@@ -1,6 +1,6 @@
-# Soundbox
+# Jawois Soundhäusle
 
-The ESP32 creates a WPA2 Wi-Fi network named `Soundbox`. Connect a phone or
+The ESP32 creates a WPA2 Wi-Fi network named `Jawois Soundhäusle`. Connect a phone or
 computer to it and open **http://192.168.71.1/** to adjust the volume. The
 network does not provide internet access. The slider saves the setting when
 released; the setting is restored from ESP32 nonvolatile storage after reboot.
@@ -18,6 +18,11 @@ preserved.
 
 The SD card file explorer lists files in the card's root directory and can
 upload or delete them. Deletion is permanent and requires confirmation.
+WAV files can also be disabled and enabled in the explorer: disabling renames
+`.wav` to `.wad`, which playback ignores; enabling changes it back to `.wav`.
+Extensions are matched case-insensitively. A rename is rejected if the target
+name already exists, so neither file is overwritten. This state persists on the
+SD card across restarts.
 Uploads must be **mono, uncompressed PCM WAV** with 8-, 16-, 24-, or 32-bit
 samples. Select an SD card filename with 1–8 ASCII letters, digits, underscores,
 or hyphens followed by `.wav`; existing files are never overwritten. Invalid or

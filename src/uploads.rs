@@ -46,6 +46,72 @@ pub fn valid_existing_name(name: &str) -> bool {
             .any(|ch| ch == '/' || ch == '\\' || ch.is_control())
 }
 
+pub fn audio_enabled(name: &str) -> Option<bool> {
+    let (_, ext) = name.rsplit_once('.')?;
+    if ext.eq_ignore_ascii_case("wav") {
+        Some(true)
+    } else if ext.eq_ignore_ascii_case("wad") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+pub fn toggle_audio(directory: &Path, name: &str) -> io::Result<()> {
+    if !valid_existing_name(name) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Invalid filename",
+        ));
+    }
+    let enabled = audio_enabled(name)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Not a WAV or WAD file"))?;
+    let (stem, _) = name.rsplit_once('.').unwrap();
+    if stem.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Invalid filename",
+        ));
+    }
+    let destination = format!("{stem}.{}", if enabled { "wad" } else { "wav" });
+    let mut source = None;
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let entry_name = entry.file_name();
+        if entry_name == name {
+            if !is_regular_file(&entry)? {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Not a regular file",
+                ));
+            }
+            source = Some(entry.path());
+        }
+        if entry_name
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&destination)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "Destination exists",
+            ));
+        }
+    }
+    let source = source.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "File not found"))?;
+    let destination = directory.join(destination);
+    match fs::metadata(&destination) {
+        Ok(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "Destination exists",
+            ))
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
+    }
+    fs::rename(source, destination)
+}
+
 pub fn is_regular_file(entry: &fs::DirEntry) -> io::Result<bool> {
     // Rust's ESP-IDF libc in this toolchain uses incompatible directory type values.
     #[cfg(target_os = "espidf")]
@@ -237,6 +303,47 @@ mod tests {
         assert!(is_temporary_name("abc01234.tmp"));
         assert!(!is_temporary_name("sounds.tmp"));
         assert_eq!(json_string("a\"\\\n"), "\"a\\\"\\\\\\u000a\"");
+    }
+
+    #[test]
+    fn toggles_audio_without_overwriting_other_files() {
+        let dir = std::env::temp_dir().join(format!("soundbox-toggle-{}", std::process::id()));
+        fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("song.WAV"), b"audio").unwrap();
+        assert_eq!(audio_enabled("song.WAV"), Some(true));
+        toggle_audio(&dir, "song.WAV").unwrap();
+        assert_eq!(audio_enabled("song.wad"), Some(false));
+        assert_eq!(audio_enabled("song.WAD"), Some(false));
+        assert_eq!(fs::read(dir.join("song.wad")).unwrap(), b"audio");
+        fs::write(dir.join("SONG.WAV"), b"other").unwrap();
+        assert_eq!(
+            toggle_audio(&dir, "song.wad").unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read(dir.join("SONG.WAV")).unwrap(), b"other");
+        assert_eq!(fs::read(dir.join("song.wad")).unwrap(), b"audio");
+        fs::remove_file(dir.join("SONG.WAV")).unwrap();
+        toggle_audio(&dir, "song.wad").unwrap();
+        assert_eq!(fs::read(dir.join("song.wav")).unwrap(), b"audio");
+        assert_eq!(audio_enabled("song.mp3"), None);
+        for name in ["../song.wav", "song.mp3", ".wav"] {
+            assert_eq!(
+                toggle_audio(&dir, name).unwrap_err().kind(),
+                io::ErrorKind::InvalidInput
+            );
+        }
+        assert_eq!(
+            toggle_audio(&dir, "missing.wav").unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+        fs::create_dir(dir.join("nested.wav")).unwrap();
+        assert_eq!(
+            toggle_audio(&dir, "nested.wav").unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        fs::remove_dir(dir.join("nested.wav")).unwrap();
+        fs::remove_file(dir.join("song.wav")).unwrap();
+        fs::remove_dir(dir).unwrap();
     }
 
     #[test]

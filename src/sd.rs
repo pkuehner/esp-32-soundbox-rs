@@ -67,7 +67,9 @@ impl<'d> SdFetcher<'d> {
         for entry in std::fs::read_dir("/sdcard")? {
             let entry = entry?;
             if let Some(name) = entry.file_name().to_str() {
-                if crate::uploads::is_temporary_name(name) {
+                if crate::uploads::is_temporary_name(name)
+                    || crate::uploads::audio_enabled(name) == Some(false)
+                {
                     continue;
                 }
                 match self.read_wave_file_header(name) {

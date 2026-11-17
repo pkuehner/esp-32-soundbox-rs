@@ -1,42 +1,97 @@
 <!doctype html>
-<html lang="en">
+<html lang="de">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Soundbox settings</title>
+  <title>Jawois Soundhäusle</title>
   <style>
-    body { font: 1.1rem system-ui, sans-serif; max-width: 32rem; margin: 3rem auto; padding: 0 1rem; }
-    input[type="range"] { width: 100%; }
-    input[type="number"] { width: 6rem; }
+    :root {
+      color-scheme: light;
+      font: 16px/1.5 system-ui, sans-serif;
+      color: #23332f;
+      background: #f3f5ef;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { max-width: 42rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+    header { margin: 0 0 1.75rem; }
+    .eyebrow { color: #4a7563; font-size: .8rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { margin: .25rem 0; font-size: clamp(2rem, 7vw, 3rem); line-height: 1.15; letter-spacing: -.04em; }
+    header p { margin: .5rem 0 0; color: #52665d; }
+    section { margin: 1rem 0; padding: 1.5rem; border: 1px solid #dce5dc; border-radius: 1rem; background: #fff; box-shadow: 0 8px 24px rgba(35, 51, 47, .05); }
+    h2 { margin: 0 0 .75rem; font-size: 1.25rem; }
+    p { margin: .75rem 0; }
+    .hint { color: #52665d; font-size: .9rem; }
+    label { display: block; margin: .75rem 0 .35rem; font-weight: 600; }
+    input, button { font: inherit; }
+    input[type="range"] { width: 100%; margin: .5rem 0; accent-color: #34775a; }
+    input[type="number"], input[type="text"], input[type="file"] {
+      width: 100%; max-width: 100%; padding: .65rem .75rem;
+      border: 1px solid #b8c9bc; border-radius: .5rem; background: #fff; color: inherit;
+    }
+    input[type="number"] { max-width: 9rem; }
+    button {
+      padding: .6rem 1rem; border: 1px solid #34775a; border-radius: .5rem;
+      background: #34775a; color: #fff; font-weight: 600; cursor: pointer;
+    }
+    button:hover:not(:disabled) { background: #285d46; }
+    button:disabled, input:disabled { opacity: .6; cursor: not-allowed; }
+    :focus-visible { outline: 3px solid #d89c38; outline-offset: 3px; }
+    form button { margin-top: 1rem; }
+    [role="status"] { color: #52665d; font-size: .9rem; overflow-wrap: anywhere; }
+    #file-list { list-style: none; margin: 1rem 0 0; padding: 0; }
+    #file-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; padding: .75rem 0; border-top: 1px solid #e6ede7; }
+    #file-list span { min-width: 0; overflow-wrap: anywhere; }
+    .file-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+    #file-list .delete-file { border-color: #a23c35; background: #fff; color: #922f29; }
+    #file-list .delete-file:hover:not(:disabled) { background: #fff1ef; }
+    @media (max-width: 30rem) {
+      main { padding-top: 1.5rem; }
+      section { padding: 1.15rem; }
+    }
   </style>
 </head>
 <body>
-  <h1>Soundbox settings</h1>
-  <label for="volume">Volume: <output id="value">--</output>%</label>
-  <input id="volume" type="range" min="0" max="100" disabled>
-  <p id="status" role="status">Loading...</p>
-  <form id="rearm-form">
-    <label for="rearm">Motion re-arm delay (seconds, 0–600)</label>
-    <input id="rearm" type="number" min="0" max="600" step="1" required disabled>
-    <button id="save-rearm" type="submit" disabled>Save</button>
-  </form>
-  <p>The delay starts when motion is detected. The sensor is re-armed after both playback and the delay finish.</p>
-  <p id="rearm-status" role="status">Loading...</p>
+  <main>
+  <header>
+    <span class="eyebrow">Steuerung</span>
+    <h1>Jawois Soundhäusle</h1>
+  </header>
   <section>
-    <h2>SD card files</h2>
-    <p>Upload <strong>mono PCM WAV files only</strong> (8, 16, 24 or 32-bit). Stereo and compressed WAV files are not supported.</p>
-    <p>Choose an SD card name with 1–8 letters, digits, underscores or hyphens, followed by .wav. Existing files are not overwritten.</p>
-    <form id="upload-form">
-      <label for="upload-file">WAV file</label>
-      <input id="upload-file" type="file" accept=".wav,audio/wav,audio/x-wav" required>
-      <label for="upload-name">SD card filename</label>
-      <input id="upload-name" type="text" maxlength="12" pattern="[A-Za-z0-9_-]{1,8}\.[Ww][Aa][Vv]" placeholder="sound.wav" required>
-      <button id="upload-button" type="submit">Upload</button>
+    <h2>Lautstärke</h2>
+    <p class="hint"><em>Ich hör gern laute Musik weil's mir gefällt und nicht weil sie laut ist. Abgesehen davon höre ich keine laute Musik.</em></p>
+    <label for="volume">Lautstärke: <output id="value">--</output>%</label>
+    <input id="volume" type="range" min="0" max="100" disabled>
+    <p id="status" role="status">Wird geladen...</p>
+  </section>
+  <section>
+    <h2>Bewegungsmelder</h2>
+    <p class="hint"><em>Jamal Crawford Microwave Instant Offense Delay</em></p>
+    <form id="rearm-form">
+      <label for="rearm">Verzögerung bis zur erneuten Aktivierung (Sekunden, 0–600)</label>
+      <input id="rearm" type="number" min="0" max="600" step="1" required disabled>
+      <button id="save-rearm" type="submit" disabled>Speichern</button>
     </form>
-    <p id="file-status" role="status">Loading files...</p>
-    <button id="refresh-files" type="button">Refresh list</button>
+    <p class="hint">Die Verzögerung beginnt, sobald eine Bewegung erkannt wird. Der Sensor wird erneut aktiviert, wenn die Wiedergabe und die Verzögerung beendet sind.</p>
+    <p id="rearm-status" role="status">Wird geladen...</p>
+  </section>
+  <section>
+    <h2>Dateien auf der SD-Karte</h2>
+    <p class="hint">Lade <strong>nur Mono-PCM-WAV-Dateien</strong> hoch (8, 16, 24 oder 32 Bit). Stereo und komprimierte WAV-Dateien werden nicht unterstützt.</p>
+    <p class="hint">Wähle einen Dateinamen mit 1–8 Buchstaben (A–Z), Ziffern, Unterstrichen oder Bindestrichen, gefolgt von .wav. Vorhandene Dateien werden nicht überschrieben.</p>
+    <p class="hint">Aktive Dateien enden auf .wav, deaktivierte auf .wad. Deaktivierte Dateien werden nicht abgespielt.</p>
+    <form id="upload-form">
+      <label for="upload-file">WAV-Datei</label>
+      <input id="upload-file" type="file" accept=".wav,audio/wav,audio/x-wav" required>
+      <label for="upload-name">Dateiname auf der SD-Karte</label>
+      <input id="upload-name" type="text" maxlength="12" pattern="[A-Za-z0-9_-]{1,8}\.[Ww][Aa][Vv]" placeholder="sound.wav" required>
+      <button id="upload-button" type="submit">Hochladen</button>
+    </form>
+    <p id="file-status" role="status">Dateien werden geladen...</p>
+    <button id="refresh-files" type="button">Liste aktualisieren</button>
     <ul id="file-list"></ul>
   </section>
+  </main>
   <script>
     const slider = document.getElementById("volume");
     const value = document.getElementById("value");
@@ -44,7 +99,7 @@
     slider.addEventListener("input", () => { value.textContent = slider.value; });
     slider.addEventListener("change", async () => {
       slider.disabled = true;
-      status.textContent = "Saving...";
+      status.textContent = "Wird gespeichert...";
       try {
         const response = await fetch("/volume", {
           method: "POST",
@@ -52,9 +107,9 @@
           body: slider.value
         });
         if (!response.ok) throw new Error("Save failed");
-        status.textContent = "Saved";
+        status.textContent = "Gespeichert";
       } catch (error) {
-        status.textContent = "Could not save volume. Adjust the slider to retry.";
+        status.textContent = "Die Lautstärke konnte nicht gespeichert werden. Bewege den Regler, um es erneut zu versuchen.";
       } finally {
         slider.disabled = false;
       }
@@ -66,9 +121,9 @@
         slider.value = await response.text();
         value.textContent = slider.value;
         slider.disabled = false;
-        status.textContent = "Adjust the slider to change the volume.";
+        status.textContent = "Bewege den Regler, um die Lautstärke zu ändern.";
       } catch (error) {
-        status.textContent = "Could not load volume. Reload the page to retry.";
+        status.textContent = "Die Lautstärke konnte nicht geladen werden. Lade die Seite erneut.";
       }
     }
     load();
@@ -83,7 +138,7 @@
       if (!rearm.reportValidity()) return;
       rearm.disabled = true;
       rearmButton.disabled = true;
-      rearmStatus.textContent = "Saving...";
+      rearmStatus.textContent = "Wird gespeichert...";
       try {
         const response = await fetch("/rearm", {
           method: "POST",
@@ -91,9 +146,9 @@
           body: String(Number(rearm.value))
         });
         if (!response.ok) throw new Error("Save failed");
-        rearmStatus.textContent = "Saved";
+        rearmStatus.textContent = "Gespeichert";
       } catch (error) {
-        rearmStatus.textContent = "Could not save delay. Try again.";
+        rearmStatus.textContent = "Die Verzögerung konnte nicht gespeichert werden. Versuche es erneut.";
       } finally {
         rearm.disabled = false;
         rearmButton.disabled = false;
@@ -107,9 +162,9 @@
         rearm.value = await response.text();
         rearm.disabled = false;
         rearmButton.disabled = false;
-        rearmStatus.textContent = "Enter a delay and select Save.";
+        rearmStatus.textContent = "Gib eine Verzögerung ein und wähle Speichern.";
       } catch (error) {
-        rearmStatus.textContent = "Could not load delay. Reload the page to retry.";
+        rearmStatus.textContent = "Die Verzögerung konnte nicht geladen werden. Lade die Seite erneut.";
       }
     }
     loadRearm();
@@ -121,12 +176,18 @@
     const uploadButton = document.getElementById("upload-button");
     const refreshButton = document.getElementById("refresh-files");
 
+    function errorMessage(error) {
+      if (error instanceof TypeError) return "Verbindung zum Gerät fehlgeschlagen.";
+      if (error instanceof SyntaxError) return "Ungültige Antwort vom Gerät.";
+      return error.message;
+    }
+
     fileInput.addEventListener("change", () => {
       fileName.value = fileInput.files.length ? fileInput.files[0].name : "";
     });
 
     async function refreshFiles() {
-      fileStatus.textContent = "Loading files...";
+      fileStatus.textContent = "Dateien werden geladen...";
       try {
         const response = await fetch("/files", { cache: "no-store" });
         if (!response.ok) throw new Error(await response.text());
@@ -135,15 +196,44 @@
         for (const name of files) {
           const item = document.createElement("li");
           const label = document.createElement("span");
-          label.textContent = name + " ";
+          label.textContent = name;
+          const actions = document.createElement("div");
+          actions.className = "file-actions";
+          if (/^.+\.(wav|wad)$/i.test(name)) {
+            const enabled = /\.wav$/i.test(name);
+            const toggle = document.createElement("button");
+            toggle.type = "button";
+            toggle.textContent = enabled ? "Deaktivieren" : "Aktivieren";
+            toggle.setAttribute("aria-label", name + (enabled ? " deaktivieren" : " aktivieren"));
+            toggle.addEventListener("click", async () => {
+              toggle.disabled = true;
+              button.disabled = true;
+              fileStatus.textContent = "Datei wird umbenannt...";
+              try {
+                const response = await fetch("/files/toggle", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/octet-stream" },
+                  body: new TextEncoder().encode(name)
+                });
+                if (!response.ok) throw new Error(await response.text());
+                await refreshFiles();
+              } catch (error) {
+                fileStatus.textContent = "Änderung fehlgeschlagen: " + errorMessage(error);
+                toggle.disabled = false;
+                button.disabled = false;
+              }
+            });
+            actions.append(toggle);
+          }
           const button = document.createElement("button");
           button.type = "button";
-          button.textContent = "Delete";
-          button.setAttribute("aria-label", "Delete " + name);
+          button.className = "delete-file";
+          button.textContent = "Löschen";
+          button.setAttribute("aria-label", name + " löschen");
           button.addEventListener("click", async () => {
-            if (!confirm("Permanently delete " + name + " from the SD card?")) return;
+            if (!confirm(name + " endgültig von der SD-Karte löschen?")) return;
             button.disabled = true;
-            fileStatus.textContent = "Deleting...";
+            fileStatus.textContent = "Wird gelöscht...";
             try {
               const response = await fetch("/files", {
                 method: "DELETE",
@@ -153,16 +243,17 @@
               if (!response.ok) throw new Error(await response.text());
               await refreshFiles();
             } catch (error) {
-              fileStatus.textContent = "Delete failed: " + error.message;
+              fileStatus.textContent = "Löschen fehlgeschlagen: " + errorMessage(error);
               button.disabled = false;
             }
           });
-          item.append(label, button);
+          actions.append(button);
+          item.append(label, actions);
           fileList.append(item);
         }
-        fileStatus.textContent = files.length ? "Files on the SD card:" : "No files on the SD card.";
+        fileStatus.textContent = files.length ? "Dateien auf der SD-Karte:" : "Keine Dateien auf der SD-Karte.";
       } catch (error) {
-        fileStatus.textContent = "Could not load files: " + error.message;
+        fileStatus.textContent = "Dateien konnten nicht geladen werden: " + errorMessage(error);
       }
     }
 
@@ -171,7 +262,7 @@
       if (!fileInput.files.length || !event.currentTarget.reportValidity()) return;
       uploadButton.disabled = true;
       refreshButton.disabled = true;
-      fileStatus.textContent = "Uploading and validating; please wait...";
+      fileStatus.textContent = "Datei wird hochgeladen und geprüft. Bitte warten...";
       try {
         const response = await fetch("/files", {
           method: "POST",
@@ -182,9 +273,9 @@
         fileInput.value = "";
         fileName.value = "";
         await refreshFiles();
-        fileStatus.textContent = "Upload complete. " + fileStatus.textContent;
+        fileStatus.textContent = "Hochladen abgeschlossen. " + fileStatus.textContent;
       } catch (error) {
-        fileStatus.textContent = "Upload failed: " + error.message;
+        fileStatus.textContent = "Hochladen fehlgeschlagen: " + errorMessage(error);
       } finally {
         uploadButton.disabled = false;
         refreshButton.disabled = false;

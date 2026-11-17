@@ -11,7 +11,7 @@ use esp_idf_svc::wifi::{
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-const SSID: &str = "Soundbox";
+const SSID: &str = "Jawois Soundhäusle";
 const PASSWORD: &str = env!("SOUNDBOX_WIFI_PASSWORD");
 const PAGE: &str = include_str!("volume.html");
 
@@ -113,7 +113,7 @@ fn register_files(
                 log::warn!("SD card unavailable for listing: {err}");
                 return request
                     .into_status_response(503)?
-                    .write_all(b"SD card busy");
+                    .write_all("SD-Karte ist belegt.".as_bytes());
             }
         };
         let names = crate::uploads::list_files(Path::new("/sdcard"));
@@ -123,7 +123,7 @@ fn register_files(
                 log::error!("Failed to list SD card: {err}");
                 return request
                     .into_status_response(500)?
-                    .write_all(b"Could not list files");
+                    .write_all("Dateien konnten nicht aufgelistet werden.".as_bytes());
             }
         };
         let json = format!(
@@ -157,15 +157,15 @@ fn register_files(
         {
             return request
                 .into_status_response(400)?
-                .write_all(b"Invalid file name, type, or size");
+                .write_all("Ungültiger Dateiname, Dateityp oder Dateigröße.".as_bytes());
         }
         let _guard = match upload_lock.try_lock() {
             Ok(guard) => guard,
             Err(err) => {
                 log::warn!("SD card unavailable for upload: {err}");
-                return request
-                    .into_status_response(503)?
-                    .write_all(b"SD card busy; try again after playback");
+                return request.into_status_response(503)?.write_all(
+                    "SD-Karte ist belegt. Versuche es nach der Wiedergabe erneut.".as_bytes(),
+                );
             }
         };
         let result = crate::uploads::receive(
@@ -183,16 +183,77 @@ fn register_files(
             Ok(()) => request.into_status_response(201)?.write_all(b"Uploaded"),
             Err(err) => {
                 log::warn!("Upload failed: {err}");
-                let status = match err.kind() {
-                    std::io::ErrorKind::InvalidInput
-                    | std::io::ErrorKind::InvalidData
-                    | std::io::ErrorKind::UnexpectedEof => 400,
-                    std::io::ErrorKind::AlreadyExists => 409,
-                    _ => 500,
+                let (status, message) = match err.kind() {
+                    std::io::ErrorKind::InvalidInput => {
+                        (400, "Ungültiger Dateiname oder ungültige Dateigröße.")
+                    }
+                    std::io::ErrorKind::InvalidData => {
+                        (400, "Ungültige oder unvollständige Mono-PCM-WAV-Datei.")
+                    }
+                    std::io::ErrorKind::UnexpectedEof => (400, "Hochladen wurde unterbrochen."),
+                    std::io::ErrorKind::AlreadyExists => {
+                        (409, "Datei oder temporäre Datei existiert bereits.")
+                    }
+                    _ => (500, "Datei konnte nicht gespeichert werden."),
                 };
                 request
                     .into_status_response(status)?
-                    .write_all(err.to_string().as_bytes())
+                    .write_all(message.as_bytes())
+            }
+        }
+    })?;
+    let toggle_lock = sd_lock.clone();
+    server.fn_handler::<EspIOError, _>("/files/toggle", Method::Post, move |mut request| {
+        let length = request
+            .header("Content-Length")
+            .and_then(|value| value.parse::<usize>().ok());
+        if request.header("Content-Type") != Some("application/octet-stream")
+            || !matches!(length, Some(1..=255))
+        {
+            return request
+                .into_status_response(400)?
+                .write_all("Ungültige Anfrage.".as_bytes());
+        }
+        let mut bytes = vec![0; length.unwrap()];
+        let mut offset = 0;
+        while offset < bytes.len() {
+            let count = request.read(&mut bytes[offset..])?;
+            if count == 0 {
+                return request
+                    .into_status_response(400)?
+                    .write_all("Unvollständige Anfrage.".as_bytes());
+            }
+            offset += count;
+        }
+        let Some(name) = std::str::from_utf8(&bytes).ok() else {
+            return request
+                .into_status_response(400)?
+                .write_all("Ungültiger Dateiname.".as_bytes());
+        };
+        let _guard = match toggle_lock.try_lock() {
+            Ok(guard) => guard,
+            Err(err) => {
+                log::warn!("SD card unavailable for toggling: {err}");
+                return request.into_status_response(503)?.write_all(
+                    "SD-Karte ist belegt. Versuche es nach der Wiedergabe erneut.".as_bytes(),
+                );
+            }
+        };
+        match crate::uploads::toggle_audio(Path::new("/sdcard"), name) {
+            Ok(()) => request.into_ok_response()?.write_all(b"OK"),
+            Err(err) => {
+                log::warn!("Audio file toggle failed: {err}");
+                let (status, message) = match err.kind() {
+                    std::io::ErrorKind::InvalidInput => (400, "Ungültiger Dateiname."),
+                    std::io::ErrorKind::NotFound => (404, "Datei nicht gefunden."),
+                    std::io::ErrorKind::AlreadyExists => {
+                        (409, "Eine Datei mit dem Zielnamen existiert bereits.")
+                    }
+                    _ => (500, "Datei konnte nicht umbenannt werden."),
+                };
+                request
+                    .into_status_response(status)?
+                    .write_all(message.as_bytes())
             }
         }
     })?;
@@ -205,7 +266,7 @@ fn register_files(
         {
             return request
                 .into_status_response(400)?
-                .write_all(b"Invalid request");
+                .write_all("Ungültige Anfrage.".as_bytes());
         }
         let mut bytes = vec![0; length.unwrap()];
         let mut offset = 0;
@@ -214,7 +275,7 @@ fn register_files(
             if count == 0 {
                 return request
                     .into_status_response(400)?
-                    .write_all(b"Incomplete request");
+                    .write_all("Unvollständige Anfrage.".as_bytes());
             }
             offset += count;
         }
@@ -224,15 +285,15 @@ fn register_files(
         else {
             return request
                 .into_status_response(400)?
-                .write_all(b"Invalid filename");
+                .write_all("Ungültiger Dateiname.".as_bytes());
         };
         let _guard = match sd_lock.try_lock() {
             Ok(guard) => guard,
             Err(err) => {
                 log::warn!("SD card unavailable for deletion: {err}");
-                return request
-                    .into_status_response(503)?
-                    .write_all(b"SD card busy; try again after playback");
+                return request.into_status_response(503)?.write_all(
+                    "SD-Karte ist belegt. Versuche es nach der Wiedergabe erneut.".as_bytes(),
+                );
             }
         };
         match crate::uploads::delete(Path::new("/sdcard"), name) {
@@ -246,7 +307,7 @@ fn register_files(
                 };
                 request
                     .into_status_response(status)?
-                    .write_all(b"Could not delete file")
+                    .write_all("Datei konnte nicht gelöscht werden.".as_bytes())
             }
         }
     })?;
