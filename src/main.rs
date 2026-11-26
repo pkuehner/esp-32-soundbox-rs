@@ -54,6 +54,12 @@ fn main() {
     };
 
     log::info!("SD Created");
+    // Uploads interrupted by a reset or power loss leave orphaned temporary files behind.
+    match uploads::remove_stale_temporary_files(std::path::Path::new("/sdcard")) {
+        Ok(0) => {}
+        Ok(count) => log::info!("Removed {count} stale temporary upload file(s)"),
+        Err(err) => log::warn!("Could not clean temporary upload files: {err}"),
+    }
     let sd_lock = Arc::new(Mutex::new(()));
     let (volume, rearm_delay, _wifi, _server) = match web::start(peripherals.modem, sd_lock.clone())
     {
@@ -73,9 +79,10 @@ fn main() {
     loop {
         if let Some(detected_at) = motion_sensor.take_motion_started() {
             let result = (|| -> Result<(), String> {
+                // Skip playback while an upload holds the SD card instead of queuing it.
                 let _sd_guard = sd_lock
-                    .lock()
-                    .map_err(|err| format!("SD lock failed: {err}"))?;
+                    .try_lock()
+                    .map_err(|err| format!("SD card busy, skipping playback: {err}"))?;
                 let files = sd_fetcher.playable_files().map_err(|err| err.to_string())?;
                 let file_name = selection::select(&files, previous_file.as_deref(), || unsafe {
                     esp_idf_sys::esp_random()
@@ -95,7 +102,9 @@ fn main() {
                     clock = clock.mclk_multiple(MclkMultiple::M384);
                 }
                 let config = StdConfig::new(
-                    I2sChannelConfig::default(),
+                    I2sChannelConfig::default()
+                        .dma_buffer_count(8)
+                        .frames_per_buffer(900),
                     clock,
                     StdSlotConfig::philips_slot_default(bits, SlotMode::Mono)
                         .slot_mode_mask(SlotMode::Mono, StdSlotMask::Left),
@@ -152,6 +161,8 @@ fn main() {
                 }
                 FreeRtos::delay_ms(remaining.min(100));
             }
+            // Drop motion that arrived during playback/delay so it can't retrigger immediately.
+            motion_sensor.take_motion_started();
             if let Err(err) = motion_sensor.rearm_interrupt() {
                 log::warn!("Failed to re-arm motion interrupt: {:?}", err);
             } else {

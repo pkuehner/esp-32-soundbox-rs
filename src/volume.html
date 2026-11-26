@@ -40,9 +40,9 @@
     form button { margin-top: 1rem; }
     [role="status"] { color: #52665d; font-size: .9rem; overflow-wrap: anywhere; }
     #file-list { list-style: none; margin: 1rem 0 0; padding: 0; }
-    #file-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; padding: .75rem 0; border-top: 1px solid #e6ede7; }
-    #file-list span { min-width: 0; overflow-wrap: anywhere; }
-    .file-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+    #file-list li { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .75rem 0; border-top: 1px solid #e6ede7; }
+    #file-list span { min-width: 0; flex: 1 1 0; overflow-wrap: anywhere; }
+    .file-actions { display: flex; flex-wrap: nowrap; gap: .5rem; flex: none; }
     #file-list .delete-file { border-color: #a23c35; background: #fff; color: #922f29; }
     #file-list .delete-file:hover:not(:disabled) { background: #fff1ef; }
     @media (max-width: 30rem) {
@@ -68,8 +68,8 @@
     <h2>Bewegungsmelder</h2>
     <p class="hint"><em>Jamal Crawford Microwave Instant Offense Delay</em></p>
     <form id="rearm-form">
-      <label for="rearm">Verzögerung bis zur erneuten Aktivierung (Sekunden, 0–600)</label>
-      <input id="rearm" type="number" min="0" max="600" step="1" required disabled>
+      <label for="rearm">Verzögerung bis zur erneuten Aktivierung (Sekunden, 0–4000000)</label>
+      <input id="rearm" type="number" min="0" max="4000000" step="1" required disabled>
       <button id="save-rearm" type="submit" disabled>Speichern</button>
     </form>
     <p class="hint">Die Verzögerung beginnt, sobald eine Bewegung erkannt wird. Der Sensor wird erneut aktiviert, wenn die Wiedergabe und die Verzögerung beendet sind.</p>
@@ -78,13 +78,13 @@
   <section>
     <h2>Dateien auf der SD-Karte</h2>
     <p class="hint">Lade <strong>nur Mono-PCM-WAV-Dateien</strong> hoch (8, 16, 24 oder 32 Bit). Stereo und komprimierte WAV-Dateien werden nicht unterstützt.</p>
-    <p class="hint">Wähle einen Dateinamen mit 1–8 Buchstaben (A–Z), Ziffern, Unterstrichen oder Bindestrichen, gefolgt von .wav. Vorhandene Dateien werden nicht überschrieben.</p>
+    <p class="hint">Wähle einen Dateinamen mit 1–124 Buchstaben (A–Z), Ziffern, Leerzeichen (nicht am Anfang oder Ende), Unterstrichen oder Bindestrichen, gefolgt von .wav. Vorhandene Dateien werden nicht überschrieben.</p>
     <p class="hint">Aktive Dateien enden auf .wav, deaktivierte auf .wad. Deaktivierte Dateien werden nicht abgespielt.</p>
     <form id="upload-form">
       <label for="upload-file">WAV-Datei</label>
       <input id="upload-file" type="file" accept=".wav,audio/wav,audio/x-wav" required>
       <label for="upload-name">Dateiname auf der SD-Karte</label>
-      <input id="upload-name" type="text" maxlength="12" pattern="[A-Za-z0-9_-]{1,8}\.[Ww][Aa][Vv]" placeholder="sound.wav" required>
+      <input id="upload-name" type="text" maxlength="128" pattern="[A-Za-z0-9_\-]([A-Za-z0-9 _\-]{0,122}[A-Za-z0-9_\-])?\.[Ww][Aa][Vv]" placeholder="sound.wav" required>
       <button id="upload-button" type="submit">Hochladen</button>
     </form>
     <p id="file-status" role="status">Dateien werden geladen...</p>
@@ -264,6 +264,14 @@
       refreshButton.disabled = true;
       fileStatus.textContent = "Datei wird hochgeladen und geprüft. Bitte warten...";
       try {
+        if (!/^[A-Za-z0-9_-]([A-Za-z0-9 _-]{0,122}[A-Za-z0-9_-])?\.wav$/i.test(fileName.value)) {
+          throw new Error("Ungültiger Dateiname: 1–124 Buchstaben, Ziffern, Leerzeichen (nicht am Rand), _ oder - gefolgt von .wav.");
+        }
+        // Ask first: a rejected upload body would still be streamed to and drained by the device.
+        const busy = await fetch("/busy", { cache: "no-store" });
+        if (!busy.ok || (await busy.text()) !== "0") {
+          throw new Error("SD-Karte ist belegt (Wiedergabe läuft). Versuche es später erneut.");
+        }
         const response = await fetch("/files", {
           method: "POST",
           headers: { "Content-Type": "application/octet-stream", "X-Filename": fileName.value },

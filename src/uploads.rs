@@ -7,10 +7,12 @@ pub fn valid_name(name: &str) -> bool {
     let Some((stem, ext)) = name.split_once('.') else {
         return false;
     };
-    (1..=8).contains(&stem.len())
+    (1..=124).contains(&stem.len())
+        && !stem.starts_with(' ')
+        && !stem.ends_with(' ')
         && stem
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b' '))
         && ext.eq_ignore_ascii_case("wav")
 }
 
@@ -140,6 +142,23 @@ pub fn list_files(directory: &Path) -> io::Result<Vec<String>> {
     Ok(names)
 }
 
+pub fn remove_stale_temporary_files(directory: &Path) -> io::Result<usize> {
+    let mut removed = 0;
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if is_temporary_name(&name) && is_regular_file(&entry)? {
+            match fs::remove_file(entry.path()) {
+                Ok(()) => removed += 1,
+                Err(err) => log::warn!("Could not remove stale upload {name}: {err}"),
+            }
+        }
+    }
+    Ok(removed)
+}
+
 pub fn delete(directory: &Path, name: &str) -> io::Result<()> {
     if !valid_existing_name(name) {
         return Err(io::Error::new(
@@ -230,7 +249,7 @@ pub fn receive(
     })?;
     let file = temp.file.as_mut().expect("temporary file is open");
     let mut remaining = length;
-    let mut buffer = [0; 4096];
+    let mut buffer = vec![0; 16 * 1024];
     while remaining > 0 {
         let limit = remaining.min(buffer.len() as u64) as usize;
         let count = read(&mut buffer[..limit])?;
@@ -281,17 +300,20 @@ mod tests {
 
     #[test]
     fn names_and_json_are_safe() {
-        for name in ["a.wav", "A1234_-8.WAV"] {
+        for name in ["a.wav", "A1234_-8.WAV", "longname9.wav", "a b.wav"] {
             assert!(valid_name(name));
         }
+        let longest = format!("{}.wav", "a".repeat(124));
+        assert!(valid_name(&longest));
+        assert!(!valid_name(&format!("{}.wav", "a".repeat(125))));
         for name in [
             "",
             "../x.wav",
-            "longname9.wav",
             "a.wav.tmp",
             ".wav",
             "a/b.wav",
-            "a b.wav",
+            "a b .wav",
+            " a.wav",
         ] {
             assert!(!valid_name(name));
         }

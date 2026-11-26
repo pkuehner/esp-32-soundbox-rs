@@ -4,6 +4,13 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8000
 # The Wi-Fi and HTTP server increase the firmware beyond the default 1 MB app slot.
 CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
 
+# Allow long (non-8.3) filenames on the SD card.
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=128
+
+# Browsers send long headers (plus X-Filename); the default 512 bytes gets rejected.
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+
 # Use this to set FreeRTOS kernel tick frequency to 1000 Hz (100 Hz by default).
 # This allows to use 1 ms granularity for thread sleeps (10 ms by default).
 #CONFIG_FREERTOS_HZ=1000

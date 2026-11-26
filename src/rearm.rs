@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-pub const MAX_SECONDS: u32 = 600;
+pub const MAX_SECONDS: u32 = 4_000_000;
 
 #[derive(Clone)]
 pub struct RearmDelay(Arc<AtomicU32>);
@@ -36,7 +36,7 @@ mod tests {
         assert_eq!(remaining_ms(1_000, 5_000, 10), 6_000);
         assert_eq!(remaining_ms(1_000, 12_000, 10), 0);
         assert_eq!(remaining_ms(1_000, 1_000, 0), 0);
-        assert_eq!(remaining_ms(1_000, 2_000, MAX_SECONDS), 599_000);
+        assert_eq!(remaining_ms(1_000, 2_000, MAX_SECONDS), 3_999_999_000);
     }
 
     #[test]

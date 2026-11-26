@@ -36,10 +36,10 @@ pub fn start(
         return Err(format!("Invalid saved volume: {saved}").into());
     }
     let volume = Volume::new(saved);
-    let saved_rearm = rearm_nvs.get_u32("rearm_sec")?.unwrap_or(60);
-    if saved_rearm > MAX_SECONDS {
-        return Err(format!("Invalid saved rearm delay: {saved_rearm}").into());
-    }
+    let saved_rearm = rearm_nvs
+        .get_u32("rearm_sec")?
+        .unwrap_or(60)
+        .min(MAX_SECONDS);
     let rearm_delay = RearmDelay::new(saved_rearm);
     let mut wifi = BlockingWifi::wrap(
         EspWifi::new(modem, event_loop.clone(), Some(partition))?,
@@ -58,7 +58,10 @@ pub fn start(
         wifi.wifi().ap_netif().get_ip_info()?.ip
     );
 
-    let mut server = EspHttpServer::new(&Default::default())?;
+    let mut server = EspHttpServer::new(&esp_idf_svc::http::server::Configuration {
+        stack_size: 16 * 1024,
+        ..Default::default()
+    })?;
     server.fn_handler::<EspIOError, _>("/", Method::Get, |request| {
         request
             .into_response(
@@ -105,6 +108,20 @@ fn register_files(
     server: &mut EspHttpServer<'static>,
     sd_lock: Arc<Mutex<()>>,
 ) -> Result<(), esp_idf_svc::sys::EspError> {
+    let busy_lock = sd_lock.clone();
+    server.fn_handler::<EspIOError, _>("/busy", Method::Get, move |request| {
+        let busy = busy_lock.try_lock().is_err();
+        request
+            .into_response(
+                200,
+                Some("OK"),
+                &[
+                    ("Content-Type", "text/plain"),
+                    ("Cache-Control", "no-store"),
+                ],
+            )?
+            .write_all(if busy { b"1" } else { b"0" })
+    })?;
     let list_lock = sd_lock.clone();
     server.fn_handler::<EspIOError, _>("/files", Method::Get, move |request| {
         let _guard = match list_lock.try_lock() {
@@ -163,9 +180,12 @@ fn register_files(
             Ok(guard) => guard,
             Err(err) => {
                 log::warn!("SD card unavailable for upload: {err}");
-                return request.into_status_response(503)?.write_all(
-                    "SD-Karte ist belegt. Versuche es nach der Wiedergabe erneut.".as_bytes(),
-                );
+                // Close the connection so the browser stops streaming the unread body over Wi-Fi.
+                return request
+                    .into_response(503, None, &[("Connection", "close")])?
+                    .write_all(
+                        "SD-Karte ist belegt. Versuche es nach der Wiedergabe erneut.".as_bytes(),
+                    );
             }
         };
         let result = crate::uploads::receive(
@@ -339,13 +359,13 @@ fn register_setting(
             .header("Content-Length")
             .and_then(|value| value.parse::<usize>().ok());
         if request.header("Content-Type") != Some("application/json")
-            || !matches!(length, Some(1..=3))
+            || !matches!(length, Some(1..=7))
         {
             return request
                 .into_status_response(400)?
                 .write_all(b"Invalid request");
         }
-        let mut bytes = [0; 3];
+        let mut bytes = [0; 7];
         let length = length.unwrap();
         let mut offset = 0;
         while offset < length {
